@@ -1,0 +1,273 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+
+title: "Vicki Hartley Course Project Phase 1 Delivery 2"
+output:
+  word_document:
+    toc: true
+    toc_depth: 3
+
+
+
+```{r, include = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(mice) 
+library(VIM) 
+library(ranger) 
+library(randomForest) 
+library(caret)
+library(skimr)
+library(GGally)
+library(gridExtra)
+library(usemodels)
+library(glmnet)
+library(ROCR)
+library(vip) 
+library(ggcorrplot) 
+library(MASS)
+library(esquisse)
+library(readr)
+library(UpSetR)
+library(naniar)
+library(parsnip)
+library(workflows)
+library(recipes)
+library(lmtest)
+```
+
+
+
+```{r}
+train = read_csv("train.csv")
+glimpse(train)
+```
+
+*Here is a summary and the structure of the data*
+```{r}
+summary(train)
+str(train)
+```
+
+*Any character variables must be mutated to factors*
+```{r}
+train = train %>% mutate(product_code = as_factor(product_code))
+train = train %>% mutate(attribute_0 = as_factor(attribute_0 ))
+train = train %>% mutate(attribute_1 = as_factor(attribute_1 ))
+train = train %>% mutate(failure = as_factor(failure )) %>%
+  mutate(failure = fct_recode(failure, "No" = "0", "Yes" = "1"))
+str(train)
+```
+
+```{r}
+ggplot(train,aes(failure)) + geom_bar() + theme_get()
+```
+```{r}
+proportions <- table(train$failure)/length(train$failure)
+percentages <- proportions*100
+```
+
+
+*I noticed there is missingness*
+```{r}
+skim(train)
+```
+
+*Looking to see if there is overlap in missingness*
+```{r}
+vim_plot = aggr(train, numbers = TRUE, prop = c(TRUE, FALSE),cex.axis=.9)
+```
+Most of the missing data are on the measurement features 
+```{r}
+gg_miss_var(train)
+```
+
+
+
+*Best to imputate missing data for loading*
+```{r}
+set.seed(1234) 
+imp_measurement_17 = train = mice(train, m=5, method='pmm', printFlag=FALSE)
+train_complete = complete(imp_measurement_17)
+summary(train)
+```
+
+*Row-wise deletion ok for measurements since not many outliers in data* 
+```{r}
+train_rowdel = train_complete %>% drop_na() 
+skim(train_complete)
+```
+
+
+
+*Split the data into testing (30%) and training (70%) stratified by the "failure" variable*
+```{r}
+set.seed(123)
+train_split = initial_split (train, prop = 0.70, strata = failure)
+train_train = training(train_split)
+test_train = testing(train_split)
+str(train_train)
+```
+
+
+
+
+
+*the below bar graph shows that there are far few product failures but there is still about ~4,700 failed products for every ~14,900.*
+```{r}
+ggplot(train_train,aes(failure)) + geom_bar() + theme_get()
+```
+
+*That appears to be a ~21% failure rate*
+```{r}
+proportions <- table(train_train$failure)/length(train_train$failure)
+percentages <- proportions*100
+```
+
+
+*It looks like some attributes could have an impact on failure*
+```{r}
+ggplot(train_train,aes(x=failure,y=attribute_0)) + geom_boxplot() + theme_get() + geom_jitter()
+ggplot(train_train,aes(x=failure,y=attribute_1)) + geom_boxplot() + theme_bw() + geom_jitter()
+ggplot(train_train,aes(x=failure,y=attribute_2)) + geom_boxplot() + theme_bw() + geom_jitter()
+ggplot(train_train,aes(x=failure,y=attribute_3)) + geom_boxplot() + theme_bw() + geom_jitter()
+```
+
+# It is hard to tell if measurements impact failure from this random set of measurments
+```{r}
+p1 = ggplot(train_train,aes(x=failure,y=measurement_0)) + geom_count()
+p2 = ggplot(train_train,aes(x=failure,y=measurement_3)) + geom_count()
+p3 = ggplot(train_train,aes(x=failure,y=measurement_6)) + geom_count()
+p4 = ggplot(train_train,aes(x=failure,y=measurement_9)) + geom_count()
+p5 = ggplot(train_train,aes(x=failure,y=measurement_12)) + geom_count()
+grid.arrange(p1,p2,p3,p4,p5, ncol = 2)
+```
+```{r}
+p1 = ggplot(train_train,aes(x=failure,y=measurement_4)) + geom_count()
+p2 = ggplot(train_train,aes(x=failure,y=measurement_6)) + geom_count()
+p3 = ggplot(train_train,aes(x=failure,y=measurement_8)) + geom_count()
+p4 = ggplot(train_train,aes(x=failure,y=measurement_10)) + geom_count()
+p5 = ggplot(train_train,aes(x=failure,y=measurement_14)) + geom_count()
+grid.arrange(p1,p2,p3,p4,p5, ncol = 2)
+```
+
+
+
+```{r}
+ggpairs(train_train, c("measurement_0", "measurement_1", "measurement_3", "measurement_4", "failure") +  theme_bw()
+```
+
+
+*The means for loading and failure are similar*
+```{r}
+ggplot(train_train,aes(x=loading,y=failure)) + geom_boxplot() + theme_bw()
+```
+
+*loading appears to be normally distributed*
+```{r}
+ggplot(train_train, aes(x=loading)) + geom_histogram() + theme_bw()
+```
+```{r}
+ggplot(train_train,aes(x=loading,y=failure)) + geom_col() + theme_linedraw()
+```
+
+
+*It looks like certain attributes impact failure.*
+*specifically Material 7 within Attribute_0 had around 3,100 failures which was the most of any material*
+```{r}
+#esquisser()
+
+
+p1 = ggplot(train_train) +
+ aes(x = failure) +
+ geom_bar(fill = "#112446") +
+ theme_bw() +
+ facet_wrap(vars(attribute_0))
+
+p2 =ggplot(train_train) +
+ aes(x = failure) +
+ geom_bar(fill = "#46337E") +
+ theme_bw() +
+ facet_wrap(vars(attribute_1))
+
+p3 = ggplot(train_train) +
+ aes(x = failure) +
+ geom_bar(fill = "#0C4C8A") +
+ theme_bw() +
+ facet_wrap(vars(attribute_2))
+
+p4 = ggplot(train_train) +
+ aes(x = failure) +
+ geom_bar(fill = "#5D3367") +
+ theme_bw() +
+ facet_wrap(vars(attribute_3))
+
+grid.arrange(p1,p2,p3,p4, ncol = 2)
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+a_0_recipe = recipe( ~ failure, train_train) %>%
+  step_dummy(all_nominal_predictors())
+
+lm_model = 
+  linear_reg()  %>% 
+  set_engine("lm")  
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(a_0_recipe)
+
+lm_fit = fit(lm_wflow, train_train)
+summary(lm_fit$fit$fit$fit)
+```
+
+
+
+
+
+
+*The P value for loading is less than 0.05 so it statistically significant to predicting failure*
+```{r}
+load_recipe = recipe(loading ~ failure, train_train) %>%
+  step_dummy(all_nominal_predictors())
+
+lm_model = 
+  linear_reg()  %>% 
+  set_engine("lm")  
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(load_recipe)
+
+lm_fit = fit(lm_wflow, train_train)
+summary(lm_fit$fit$fit$fit)
+```
+
+
+```{r}
+ggplot(train_train, aes(x=loading, y=failure)) + geom_point() + geom_smooth(method = "lm",se=FALSE, color="red") + theme_bw()
+```
+
+
+
+```{r}
+train_pred_load = predict(lm_fit, train_train)
+head(train_pred_load) 
+```
+
+```{r}
+train_train = train_train %>% dplyr::select(c("measurement_0","measurement_1","measurement_3","measurement_4","failure")) 
+str(train_train)
+```
+

@@ -1,0 +1,353 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+##Vicki Hartley Course Project Phase 2 Delivery 2##
+
+
+```{r, include = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(mice) 
+library(VIM) 
+library(ranger) 
+library(randomForest) 
+library(caret)
+library(skimr)
+library(GGally)
+library(gridExtra)
+library(usemodels)
+library(glmnet)
+library(ROCR)
+library(vip) 
+library(ggcorrplot) 
+library(MASS)
+library(esquisse)
+library(readr)
+library(UpSetR)
+library(naniar)
+library(parsnip)
+library(workflows)
+library(recipes)
+library(lmtest)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(ranger)
+```
+
+
+
+```{r}
+ames = read_csv("ames_student-1.csv")
+glimpse(ames)
+```
+
+
+```{r}
+summary(ames)
+str(ames)
+```
+
+
+
+There does not appear to be missing data
+
+Using Geom Box Plots and Bars to better visualize the data
+
+*It looks like the data is just about split in half with a little over 1,000 of homes being above the median and ~1,000 falling below median*
+```{r}
+ggplot(ames,aes(Above_Median)) + geom_bar() + theme_get()
+```
+
+
+
+
+*The below shows what neighborhoods have the most houses above median*
+*North Ames seems to have the most houses below median whereas College Creek looks to have the most above but this is only a visual inspection prediction*
+```{r}
+ggplot(ames,aes(x = Neighborhood, fill = Above_Median)) + geom_bar(postion="fill") + theme_bw() + scale_x_discrete(guide = guide_axis(angle = 90)) 
+
+```
+
+
+
+*The below chart shows what neighborhoods have the most and least houses above median*
+99% of homes withing the Northridge Heights neighborhood are above median    
+92% of homes within the Iowa_DOT and Rail Road neighborhood are below median  
+```{r}
+t1 = table(ames$Above_Median, ames$Neighborhood) 
+prop.table(t1, margin = 2 ) 
+```
+
+
+
+*It looks like the average age of homes below median is ~1960 and the average age of homes selling above median is ~2000s*
+```{r}
+ggplot(ames, aes(x = Above_Median, y = Year_Built)) + geom_boxplot() + theme_get()
+```
+
+
+
+*It looks like most homes were built after the 2000s*
+```{r}
+ggplot(ames, aes(x = Year_Built)) + geom_histogram() + theme_bw()
+```
+
+*There is some spread for homes above median by lot area*
+```{r}
+ggplot(ames, aes(x = Above_Median, y = Lot_Area)) + geom_point() + theme_update()
+```
+
+
+#Predictions# 
+
+
+Split the data into testing (20%) and training (80%) stratified by the "Above_Median" variable
+```{r}
+set.seed(123)
+ames_split = initial_split (ames, prop = 0.80, strata = Above_Median)
+train_train = training(ames_split)
+test_train = testing(ames_split)
+str(train_train)
+```
+
+
+Preparing data
+```{r}
+train_train <- train_train %>% mutate_if(is.character,as.factor)%>% 
+  mutate(Above_Median = as_factor(Above_Median)) %>% 
+  mutate(Above_Median = fct_recode(Above_Median, "No" = "0", "Yes" = "1" ))
+str(train_train) 
+```
+
+
+
+
+Predicting log odds of Neighborhood corresponding to Above_Median
+Some neighborhoods are very statistically significant 
+```{r}
+ames_n_model = 
+  logistic_reg() %>% 
+  set_engine("glm") 
+
+ames_n_recipe = recipe(Above_Median ~ Neighborhood, train_train) %>%
+  step_dummy(all_nominal(), -all_outcomes()) 
+
+logreg_wf = workflow() %>%
+  add_recipe(ames_n_recipe) %>% 
+  add_model(ames_n_model)
+
+ames_n_fit = fit(logreg_wf, train_train)
+summary(ames_n_fit$fit$fit$fit)
+```
+
+
+Adding Year_Built lowered my AIC from 1297.5 to 1254.4
+Year built is statistically significant 
+```{r}
+ames_ny_model = 
+  logistic_reg() %>% 
+  set_engine("glm") 
+
+ames_ny_recipe = recipe(Above_Median ~ Neighborhood + Year_Built, train_train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(ames_ny_recipe) %>% 
+  add_model(ames_ny_model)
+
+ames_ny_fit = fit(logreg_wf, train_train)
+summary(ames_ny_fit$fit$fit$fit)
+```
+
+
+
+         
+Adding Lot information lowered AIC amount to 1180.3
+Lot is also statistically significant 
+```{r}
+ames_nyl_model = 
+  logistic_reg() %>% 
+  set_engine("glm") 
+
+ames_nyl_recipe = recipe(Above_Median ~ Neighborhood + Year_Built + Lot_Area, train_train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(ames_nyl_recipe) %>% 
+  add_model(ames_nyl_model)
+
+ames_nyl_fit = fit(logreg_wf, train_train)
+summary(ames_nyl_fit$fit$fit$fit)
+```
+
+
+#Predictions# 
+
+*There is a 79% chance a home in the North Ames neighborhood built in 1961 sold below median*
+```{r}
+newdata = data.frame(Neighborhood = "North_Ames", Year_Built = 1961)
+predict(ames_ny_fit, newdata, type="prob")
+```
+
+
+*There is a 50/50 chance on whether a home built in the year 2000 in the Edwards neighborhood with a large lot area will sell above median*
+```{r}
+newdata = data.frame(Neighborhood = "Edwards", Year_Built = 2000, Lot_Area = 11679)
+predict(ames_nyl_fit, newdata, type="prob")
+```
+
+
+*There is a 95% chance that a home in the Bloomington Heights built in 2007 with a lot area between 3000- 3500 will sell above median* 
+```{r}
+newdata = data.frame(Neighborhood = "Bloomington_Heights", Year_Built = 2007, Lot_Area = 3000-3500)
+predict(ames_nyl_fit, newdata, type="prob")
+```
+
+Classification Tree by Lot 
+
+```{r}
+ames_lrecipe = recipe(Above_Median ~ Lot_Area, train_train)
+
+tree_model = decision_tree() %>% 
+  set_engine("rpart", model = TRUE) %>% 
+  set_mode("classification")
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(ames_lrecipe)
+
+ames_lfit = fit(ames_wflow, train_train)
+```
+
+
+```{r}
+ames_lfit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")  
+```
+
+
+```{r}
+tree = ames_lfit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+  
+rpart.plot(tree)
+```
+
+
+Classification Tree by Year Built 
+```{r}
+ames_yrecipe = recipe(Above_Median ~ Year_Built, train_train)
+
+tree_model = decision_tree() %>% 
+  set_engine("rpart", model = TRUE) %>% 
+  set_mode("classification")
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(ames_yrecipe)
+
+ames_yfit = fit(ames_wflow, train_train)
+```
+
+```{r}
+ames_yfit %>%
+  pull_workflow_fit() %>%
+  pluck("fit") 
+```
+
+
+```{r}
+tree = ames_yfit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+  
+rpart.plot(tree)
+```
+
+
+Random Forests and Performance on Testing and Training 
+```{r}
+train_recipe = recipe(Above_Median ~., train_train) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+rf_model = rand_forest() %>% 
+  set_engine("ranger") %>% 
+  set_mode("classification") 
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(train_recipe)
+
+set.seed(123)
+train_fit = fit(ames_wflow, train_train)
+train_fit
+```
+
+```{r}
+predRF = predict(train_fit, train_train)
+head(predRF)
+```
+
+
+```{r}
+confusionMatrix(predRF$.pred_class, train_train$Above_Median, positive = "Yes")
+```
+
+
+
+```{r}
+test_train <- test_train %>% mutate_if(is.character,as.factor)%>% 
+  mutate(Above_Median = as_factor(Above_Median)) %>% 
+  mutate(Above_Median = fct_recode(Above_Median, "No" = "0", "Yes" = "1" ))
+str(test_train) 
+
+```
+
+
+```{r}
+
+test_recipe = recipe(Above_Median ~., test_train) %>% 
+  step_dummy()
+
+rf_model = rand_forest() %>% 
+  set_engine("ranger") %>% 
+  set_mode("classification") 
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(test_recipe)
+
+set.seed(123)
+test_fit = fit(ames_wflow, test_train)
+test_fit
+```
+
+
+```{r}
+predRF = predict(test_fit, test_train)
+head(predRF)
+```
+
+
+
+
+```{r}
+confusionMatrix(predRF$.pred_class, test_train$Above_Median, positive = "Yes")
+```
+
+
+
+
+
+
+
+
